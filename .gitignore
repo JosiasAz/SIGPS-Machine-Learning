@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+
+# Artifacts (opcional: você pode versionar o model.pkl se quiser)
+artifacts/*.pkl
+artifacts/*.joblib
+
+# Data
+data/raw/*
+data/processed/*
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+
+# OS/Editor
+.DS_Store
+.vscode/
+.idea/

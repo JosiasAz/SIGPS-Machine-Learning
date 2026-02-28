@@ -1,0 +1,14 @@
+{
+  "mae": 3.5904898081864567,
+  "r2": 0.9492494355314888,
+  "ordem_features": [
+    "urgencia",
+    "historico_consultas",
+    "historico_faltas",
+    "minutos_na_fila"
+  ],
+  "n_treino": 16000,
+  "n_teste": 4000,
+  "modelo": "RandomForestRegressor",
+  "dataset_csv": "data/raw/sigps_dataset.csv"
+}
