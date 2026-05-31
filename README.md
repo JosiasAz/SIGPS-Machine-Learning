@@ -1,91 +1,393 @@
-# SIGPS Machine Learning API
+# SIGPS — Machine Learning
 
-Repositório dedicado ao treinamento do modelo de Inteligência Artificial e à API de inferência do SIGPS, projetada para a classificação de prioridade de pacientes em filas de espera.
+Microserviço de **Inteligência Artificial** do SIGPS. Treina e expõe um modelo **Random Forest** para classificar a **prioridade clínica** de pacientes na fila de atendimento (níveis 1, 2 e 3), consumido pelo backend Flask via HTTP.
 
-## Objetivo
+> Deploy em container: [DOCKER.md](./DOCKER.md)
 
-- Treinar o modelo de Machine Learning (`RandomForestClassifier`) usando os dados do paciente (Idade, Comorbidades, Alergias, etc.).
-- Expor o modelo treinado através de uma **API RESTful (FastAPI)** rodando na porta 8000.
-- Classificar a prioridade clínica em Categorias (1: Normal, 2: Alta, 3: Extrema).
-- Interagir com o Backend Flask do SIGPS de forma completamente autônoma.
+---
 
-## Setup e Instalação (Local ou VPS)
+## Índice
 
-Este serviço foi projetado para rodar isoladamente do Backend principal, consumindo as dependências necessárias para Data Science.
+1. [Visão geral](#visão-geral)
+2. [Stack tecnológica](#stack-tecnológica)
+3. [Arquitetura do módulo ML](#arquitetura-do-módulo-ml)
+4. [Apresentação das “telas” (API)](#apresentação-das-telas-api)
+5. [Fluxogramas](#fluxogramas)
+6. [Modelo e features](#modelo-e-features)
+7. [Como executar](#como-executar)
+8. [Estrutura do projeto](#estrutura-do-projeto)
+
+---
+
+## Visão geral
+
+Este módulo roda **de forma independente** na porta **8000**. O backend não carrega o `.pkl` diretamente: envia um `POST` para `/predict` e persiste o resultado em `fila_atendimento`.
+
+```mermaid
+flowchart LR
+    P[Paciente preenche comorbidades] --> F[Frontend]
+    F --> B[Backend check-in fila]
+    B -->|JSON features| M[SIGPS-ML :8000]
+    M -->|prioridade 1-3| B
+    B --> DB[(Fila reordenada)]
+    F --> U[Usuário vê fila atualizada]
+```
+
+### Níveis de prioridade
+
+| Código | Categoria | Uso clínico (resumo) |
+|--------|-----------|----------------------|
+| **1** | Normal | Atendimento padrão |
+| **2** | Alta | Fatores de risco moderados |
+| **3** | Extrema | Idoso com comorbidades graves ou câncer |
+
+---
+
+## Stack tecnológica
+
+| Tecnologia | Uso |
+|------------|-----|
+| Python 3.10+ | Runtime |
+| FastAPI | API REST de inferência |
+| Uvicorn | Servidor ASGI |
+| scikit-learn | RandomForestClassifier |
+| pandas / numpy | Dataset e features |
+| joblib | Serialização do modelo (`.pkl`) |
+| Pydantic | Validação do payload `/predict` |
+
+---
+
+## Arquitetura do módulo ML
+
+```mermaid
+flowchart TB
+    subgraph Offline["Pipeline offline (treino)"]
+        DS[dataset.py - dados sintéticos]
+        FEAT[features.py]
+        TR[train.py]
+        PKL[(artifacts/model.pkl)]
+        MET[(artifacts/metrics.json)]
+        DS --> TR
+        FEAT --> TR
+        TR --> PKL
+        TR --> MET
+    end
+
+    subgraph Online["Pipeline online (inferência)"]
+        API[api.py FastAPI]
+        MDL[Modelo em memória]
+        FB[Fallback por regras]
+        API --> MDL
+        API --> FB
+        PKL -.->|joblib.load| MDL
+    end
+
+    BE[SIGPS-Backend] -->|HTTP POST| API
+```
+
+### Diagrama de classes
+
+```mermaid
+classDiagram
+    class FastAPIApp {
+        +GET /health
+        +POST /predict
+    }
+    class PredictionRequest {
+        +int idade
+        +int tem_diabetes
+        +int tem_hipertensao
+        +int tem_cancer
+        +int organization_id
+    }
+    class FeaturesPrioridade {
+        +para_array()
+    }
+    class RandomForestClassifier {
+        +predict()
+    }
+    class TrainPipeline {
+        +criar_dataset()
+        +fit()
+        +dump model.pkl
+    }
+
+    FastAPIApp --> PredictionRequest
+    FastAPIApp --> RandomForestClassifier
+    TrainPipeline --> RandomForestClassifier
+    FeaturesPrioridade --> RandomForestClassifier
+```
+
+---
+
+## Apresentação das “telas” (API)
+
+O módulo ML não possui interface gráfica própria; a “apresentação” ocorre via **endpoints REST** e pelo **painel do frontend** (Fila de Espera / Gestão IA).
+
+### Endpoints
+
+| “Tela” lógica | Método | Rota | Descrição |
+|---------------|--------|------|-----------|
+| **Status do serviço** | `GET` | `/health` | Verifica se a API está no ar e se o modelo foi carregado. |
+| **Inferência** | `POST` | `/predict` | Recebe features e retorna `prioridade` (1, 2 ou 3). |
+
+#### Wireframe — Resposta visual no Swagger / cliente HTTP
+
+```mermaid
+block-beta
+    columns 1
+    block:health:1
+        h["GET /health → status, model_loaded, model_path"]
+    end
+    block:predict:1
+        p["POST /predict\nBody: idade, flags comorbidades, organization_id"]
+        r["Response: { prioridade: 1|2|3 }"]
+    end
+```
+
+### Onde o usuário vê o resultado (Frontend)
+
+| Tela SIGPS | Rota frontend | O que exibe da IA |
+|------------|---------------|-------------------|
+| **Fila de espera** | `/painel/fila` | Ordem por prioridade, badge “IA automática”, card de análise |
+| **Gestão IA** | `/painel/gestao-ia` | Monitoramento auxiliar da priorização |
+| **Check-in** | Ação na fila | Prioridade calculada no momento do check-in |
+
+### Exemplo de requisição e resposta
+
+**Request:**
+
+```json
+POST /predict
+{
+  "idade": 72,
+  "tem_diabetes": 1,
+  "tem_hipertensao": 1,
+  "tem_cancer": 0,
+  "organization_id": 3
+}
+```
+
+**Response:**
+
+```json
+{
+  "prioridade": 3
+}
+```
+
+### Capturas para documentação (TCC)
+
+Salve prints de testes em:
+
+```
+SIGPS-Machine-Learning/docs/screenshots/
+├── 01-swagger-health.png
+├── 02-swagger-predict.png
+├── 03-fila-frontend-resultado.png
+└── 04-metrics-json.png
+```
+
+---
+
+## Fluxogramas
+
+### Fluxo completo: do cadastro à fila priorizada
+
+```mermaid
+sequenceDiagram
+    participant Pac as Paciente
+    participant FE as Frontend
+    participant BE as Backend
+    participant ML as SIGPS-ML
+    participant DB as Banco
+
+    Pac->>FE: Cadastra comorbidades no perfil
+    Pac->>FE: Check-in na fila
+    FE->>BE: POST /api/v1/queue/check-in
+    BE->>BE: Extrai idade e texto de comorbidades
+    BE->>ML: POST /predict
+    alt model.pkl carregado
+        ML->>ML: RandomForest.predict()
+    else modelo ausente
+        ML->>ML: Regras de fallback
+    end
+    ML-->>BE: { prioridade }
+    BE->>DB: Salva FilaAtendimento
+    BE-->>FE: Fila ordenada
+    FE-->>Pac: Exibe posição e prioridade
+```
+
+### Fluxo de treinamento (offline)
+
+```mermaid
+flowchart TD
+    A[python src/train.py] --> B[Gerar dataset sintético 2000 amostras]
+    B --> C[train_test_split 80/20]
+    C --> D[RandomForestClassifier.fit]
+    D --> E[Avaliar accuracy]
+    E --> F[joblib.dump → artifacts/model.pkl]
+    F --> G[Salvar artifacts/metrics.json]
+    G --> H[Reiniciar API Uvicorn]
+```
+
+### Fluxo de inferência com fallback
+
+```mermaid
+flowchart TD
+    R[POST /predict] --> M{model.pkl existe?}
+    M -->|Sim| P[model.predict features]
+    M -->|Não| F[Regras: câncer / idoso + comorbidade]
+    P --> OUT[Retorna prioridade]
+    F --> OUT
+```
+
+### Integração no backend (`fila_helpers.py`)
+
+```mermaid
+flowchart LR
+    subgraph Backend
+        A[calcular_prioridade_paciente] --> B[Monta payload JSON]
+        B --> C[requests.post ML_API_URL]
+        C --> D{HTTP 200?}
+        D -->|Sim| E[Usa prioridade ML]
+        D -->|Não| F[Fallback local idêntico às regras da API]
+    end
+```
+
+---
+
+## Modelo e features
+
+### Features de entrada (`ORDEM_FEATURES`)
+
+| Feature | Tipo | Origem no SIGPS |
+|---------|------|-----------------|
+| `idade` | int | Calculada a partir de `data_nascimento` |
+| `tem_diabetes` | 0/1 | Texto de `comorbidades` |
+| `tem_hipertensao` | 0/1 | Texto de `comorbidades` |
+| `tem_cancer` | 0/1 | Texto de `comorbidades` |
+| `organization_id` | int | Contexto da unidade de saúde |
+
+### Artefatos gerados
+
+```
+artifacts/
+├── model.pkl      # Modelo treinado (não versionado no git)
+└── metrics.json   # Accuracy, ordem das features, contagem treino/teste
+```
+
+---
+
+## Como executar
+
+### 1. Ambiente
 
 ```bash
-# 1. Ative o ambiente virtual (pode usar o mesmo do Backend ou criar um novo)
 python -m venv .venv
-
 # Windows
 .venv\Scripts\activate
 # Linux/Mac
 source .venv/bin/activate
 
-# 2. Instale as dependências
 pip install -r requirements.txt
 ```
 
-## Como rodar o serviço
+Instale também dependências da API (se usar ambiente mínimo):
 
-A arquitetura atual exige que a API de ML fique executando em segundo plano.
+```bash
+pip install fastapi uvicorn joblib scikit-learn pydantic
+```
 
-### Treinamento Inicial (Obrigatório)
-Antes de iniciar a API pela primeira vez, você **deve treinar o modelo** para que o arquivo `src/model.pkl` seja gerado.
+### 2. Treinar o modelo (obrigatório na primeira vez)
 
 ```bash
 python src/train.py
 ```
 
-### Iniciando a API Localmente
+### 3. Subir a API
+
 ```bash
 python -m uvicorn api:app --reload --port 8000
 ```
-> O serviço ficará escutando requisições em `http://127.0.0.1:8000`.
 
-### Rodando em Produção (VPS Linux)
-Para manter o serviço no ar de forma robusta, recomendamos o uso de PM2 ou Systemd:
+- Health: `http://127.0.0.1:8000/health`
+- Docs interativas: `http://127.0.0.1:8000/docs`
 
-**Exemplo usando PM2:**
+### 4. Configurar o backend
+
+No `.env` do **SIGPS-Backend**:
+
+```env
+ML_API_URL=http://127.0.0.1:8000/predict
+```
+
+Em Docker na mesma rede: `http://sigps-ml:8000/predict`
+
+### Produção (exemplo PM2)
+
 ```bash
-pm2 start "python -m uvicorn api:app --host 0.0.0.0 --port 8000" --name "sigps-ml"
+pm2 start "python -m uvicorn api:app --host 0.0.0.0 --port 8000" --name sigps-ml
 pm2 save
 ```
 
-## Estrutura do repositório
+### Docker
 
-```
-src/
-├── features.py    – Engenharia de atributos (mapeamento de comorbidades para One-Hot).
-├── train.py       – Rotina de treinamento (RandomForest, salvamento do pickle).
-api.py             – Servidor FastAPI que expõe o endpoint /predict.
-requirements.txt   – Dependências (FastAPI, Scikit-learn, Uvicorn).
-README.md          – Este guia.
+```bash
+# Coloque model.pkl em artifacts/ antes do build (opcional)
+docker compose up -d --build
 ```
 
-## Integração Automática com o Backend
+Sem modelo, a API usa **fallback por regras** (comportamento documentado em `api.py`).
 
-Na arquitetura antiga, o Backend Flask lia o arquivo `model.pkl` diretamente. Na **nova arquitetura (Microserviço)**, o processo de comunicação acontece via HTTP:
+---
 
-1. O Paciente preenche sua "Ficha Médica" no Frontend informando `comorbidades` e `alergias`.
-2. O Paciente faz Check-in na fila de espera.
-3. O Backend Flask envia automaticamente um `POST http://127.0.0.1:8000/predict` contendo o payload do paciente em formato JSON:
-   ```json
-   {
-       "idade": 65,
-       "comorbidades": "Diabetes, Hipertensão",
-       "alergias": "Nenhuma"
-   }
-   ```
-4. A API FastAPI recebe a requisição, formata os dados usando o `features.py`, submete ao modelo carregado em memória, e devolve a resposta:
-   ```json
-   {
-       "prioridade": 3,
-       "reasoning": "Idoso (>=65 anos) com fatores de risco detectados."
-   }
-   ```
-5. O Backend Flask salva essas informações na tabela `fila_atendimento` e a Fila é reordenada na mesma hora para todos os usuários da clínica.
+## Estrutura do projeto
 
-### Observações Finais
-- As comorbidades informadas pelos pacientes são transformadas de texto livre para _features binárias_ utilizando algoritmos de NLP básicos dentro do `features.py`.
-- O paciente pode enviar documentos médicos (Laudos) via portal para validar juridicamente as comorbidades inseridas, mantendo a confiabilidade da IA.
+```
+SIGPS-Machine-Learning/
+├── api.py                 # FastAPI — /health e /predict
+├── artifacts/
+│   ├── model.pkl          # Gerado pelo treino
+│   └── metrics.json
+├── core/
+│   └── path.py            # Caminhos dos artefatos
+├── src/
+│   ├── train.py           # Pipeline de treinamento
+│   ├── dataset.py         # Geração de dados sintéticos
+│   ├── features.py        # Contrato de features
+│   ├── evaluate.py
+│   └── export.py
+├── requirements.txt
+├── Dockerfile
+└── docker-compose.yml
+```
+
+---
+
+## Módulos relacionados
+
+| Repositório | Função |
+|-------------|--------|
+| [SIGPS-Backend](../SIGPS-Backend/README.md) | Chama `/predict` e persiste a fila |
+| [SIGPS-Frontend](../SIGPS-Frontend/README.md) | Exibe fila ordenada e análise IA |
+
+---
+
+## Equipe
+
+Projeto desenvolvido como **Trabalho de Conclusão de Curso (TCC)** pela **Faculdade Metropolitana de Manaus**, pelos integrantes:
+
+- Josias Azevedo da Silva
+- Matheus Akabane Brazão
+- Kaio Oliveira Pantoja
+- Alan Nicolas Santos Maragua
+- Olliver de Aquino Freitas
+
+### Orientação
+
+**Professora orientadora:** Luana Magalhães Leal
+
+---
+
+**SIGPS** — Trabalho de Conclusão de Curso · Classificação de prioridade clínica com Machine Learning
