@@ -16,6 +16,7 @@ def criar_dataset(n_samples: int = 1000):
     diabetes = np.random.choice([0, 1], n_samples, p=[0.8, 0.2])
     hipertensao = np.random.choice([0, 1], n_samples, p=[0.7, 0.3])
     cancer = np.random.choice([0, 1], n_samples, p=[0.95, 0.05])
+    org_ids = np.random.randint(1, 6, n_samples) # Simula IDs de organizações de 1 a 5
     
     prioridades = []
     
@@ -39,6 +40,7 @@ def criar_dataset(n_samples: int = 1000):
         "tem_diabetes": diabetes,
         "tem_hipertensao": hipertensao,
         "tem_cancer": cancer,
+        "organization_id": org_ids,
         "prioridade": prioridades
     })
     

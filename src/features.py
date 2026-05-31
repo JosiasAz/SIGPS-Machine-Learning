@@ -6,6 +6,7 @@ ORDEM_FEATURES = [
     "tem_diabetes",
     "tem_hipertensao",
     "tem_cancer",
+    "organization_id",
 ]
 
 @dataclass(frozen=True)
@@ -14,6 +15,7 @@ class FeaturesPrioridade:
     tem_diabetes: int
     tem_hipertensao: int
     tem_cancer: int
+    organization_id: int
 
     def para_array(self) -> np.ndarray:
         return np.array(
@@ -22,6 +24,7 @@ class FeaturesPrioridade:
                 self.tem_diabetes,
                 self.tem_hipertensao,
                 self.tem_cancer,
+                self.organization_id,
             ],
             dtype=np.float32,
         )

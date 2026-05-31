@@ -1,0 +1,25 @@
+# SIGPS Machine Learning — container/imagem: sigps-ml
+# Uso isolado:  cd SIGPS-Machine-Learning && docker compose up -d --build
+# Stack completa: use docker compose na raiz do repositório
+
+services:
+  sigps-ml:
+    build: .
+    image: sigps-ml:${TAG:-dev}
+    container_name: sigps-ml
+    restart: unless-stopped
+    ports:
+      - "${ML_PORT:-8000}:8000"
+    networks:
+      - sigps-network
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+networks:
+  sigps-network:
+    name: sigps-network
+    driver: bridge

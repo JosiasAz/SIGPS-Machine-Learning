@@ -4,7 +4,8 @@
     "idade",
     "tem_diabetes",
     "tem_hipertensao",
-    "tem_cancer"
+    "tem_cancer",
+    "organization_id"
   ],
   "n_treino": 1600,
   "n_teste": 400,
